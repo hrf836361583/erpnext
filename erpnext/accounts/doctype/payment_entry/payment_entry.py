@@ -1010,9 +1010,7 @@ class PaymentEntry(AccountsController):
 			elif self.payment_type == "Pay":
 				exchange_rate = self.target_exchange_rate
 
-			base_allocated_amount += flt(
-				flt(d.allocated_amount) * flt(exchange_rate), self.precision("base_paid_amount")
-			)
+			base_allocated_amount += flt(d.allocated_amount) * flt(exchange_rate)
 		else:
 			# Use source/target exchange rate, so no difference amount is calculated.
 			# then update exchange gain/loss amount in reference table
@@ -1024,19 +1022,18 @@ class PaymentEntry(AccountsController):
 			elif self.payment_type == "Pay":
 				exchange_rate = self.target_exchange_rate
 
-			base_allocated_amount += flt(
-				flt(d.allocated_amount) * flt(exchange_rate), self.precision("base_paid_amount")
-			)
+			base_allocated_amount += flt(d.allocated_amount) * flt(exchange_rate)
 
 			# on rare case, when `exchange_rate` is unset, gain/loss amount is incorrectly calculated
 			# for base currency transactions
 			if d.exchange_rate is None:
 				d.exchange_rate = 1
 
-			allocated_amount_in_pe_exchange_rate = flt(
-				flt(d.allocated_amount) * flt(d.exchange_rate), self.precision("base_paid_amount")
+			allocated_amount_in_pe_exchange_rate = flt(d.allocated_amount) * flt(d.exchange_rate)
+			d.exchange_gain_loss = flt(
+				base_allocated_amount - allocated_amount_in_pe_exchange_rate,
+				self.precision("base_paid_amount"),
 			)
-			d.exchange_gain_loss = base_allocated_amount - allocated_amount_in_pe_exchange_rate
 		return base_allocated_amount
 
 	def set_total_allocated_amount(self):
@@ -1049,8 +1046,10 @@ class PaymentEntry(AccountsController):
 				total_allocated_amount += flt(d.allocated_amount)
 				base_total_allocated_amount += self.calculate_base_allocated_amount_for_reference(d)
 
-		self.total_allocated_amount = abs(total_allocated_amount)
-		self.base_total_allocated_amount = abs(base_total_allocated_amount)
+		self.total_allocated_amount = abs(flt(total_allocated_amount, self.precision("base_paid_amount")))
+		self.base_total_allocated_amount = abs(
+			flt(base_total_allocated_amount, self.precision("base_paid_amount"))
+		)
 
 	def set_unallocated_amount(self):
 		self.unallocated_amount = 0
@@ -1077,6 +1076,7 @@ class PaymentEntry(AccountsController):
 					self.base_paid_amount - (total_deductions + self.base_total_allocated_amount)
 				) / self.target_exchange_rate
 				self.unallocated_amount -= included_taxes
+			self.unallocated_amount = flt(self.unallocated_amount, self.precision("unallocated_amount"))
 
 	def set_difference_amount(self):
 		base_unallocated_amount = flt(self.unallocated_amount) * (
@@ -1244,7 +1244,9 @@ class PaymentEntry(AccountsController):
 
 			gle = party_gl_dict.copy()
 
-			allocated_amount_in_company_currency = self.calculate_base_allocated_amount_for_reference(d)
+			allocated_amount_in_company_currency = flt(
+				self.calculate_base_allocated_amount_for_reference(d), self.precision("base_paid_amount")
+			)
 
 			if (
 				d.reference_doctype in ["Sales Invoice", "Purchase Invoice"]
@@ -1363,7 +1365,9 @@ class PaymentEntry(AccountsController):
 
 		dr_or_cr, account = self.get_dr_and_account_for_advances(invoice)
 		args_dict["account"] = account
-		args_dict[dr_or_cr] = self.calculate_base_allocated_amount_for_reference(invoice)
+		args_dict[dr_or_cr] = flt(
+			self.calculate_base_allocated_amount_for_reference(invoice), self.precision("base_paid_amount")
+		)
 		args_dict[dr_or_cr + "_in_account_currency"] = invoice.allocated_amount
 		args_dict.update(
 			{
@@ -1382,7 +1386,9 @@ class PaymentEntry(AccountsController):
 		args_dict[dr_or_cr + "_in_account_currency"] = 0
 		dr_or_cr = "debit" if dr_or_cr == "credit" else "credit"
 		args_dict["account"] = self.party_account
-		args_dict[dr_or_cr] = self.calculate_base_allocated_amount_for_reference(invoice)
+		args_dict[dr_or_cr] = flt(
+			self.calculate_base_allocated_amount_for_reference(invoice), self.precision("base_paid_amount")
+		)
 		args_dict[dr_or_cr + "_in_account_currency"] = invoice.allocated_amount
 		args_dict.update(
 			{
