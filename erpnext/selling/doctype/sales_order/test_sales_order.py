@@ -2197,6 +2197,76 @@ class TestSalesOrder(AccountsTestMixin, FrappeTestCase):
 
 		self.assertRaises(frappe.ValidationError, so1.update_status, "Draft")
 
+	@change_settings("Stock Settings", {"enable_stock_reservation": True})
+	def test_warehouse_mapping_based_on_stock_reservation(self):
+		self.create_company(company_name="Glass Ceiling", abbr="GC")
+		self.create_item("Lamy Safari", True, self.warehouse_stores, self.company)
+		self.create_customer()
+		self.clear_old_entries()
+
+		so = frappe.new_doc("Sales Order")
+		so.company = self.company
+		so.customer = self.customer
+		so.transaction_date = today()
+		so.append(
+			"items",
+			{
+				"item_code": self.item,
+				"qty": 10,
+				"rate": 2000,
+				"warehouse": self.warehouse_stores,
+				"delivery_date": today(),
+			},
+		)
+		so.save()
+		so.submit()
+
+		# Create stock
+		se = frappe.get_doc(
+			{
+				"doctype": "Stock Entry",
+				"company": self.company,
+				"stock_entry_type": "Material Receipt",
+				"posting_date": today(),
+				"items": [
+					{"item_code": self.item, "t_warehouse": self.warehouse_stores, "qty": 5},
+					{"item_code": self.item, "t_warehouse": self.warehouse_finished_goods, "qty": 5},
+				],
+			}
+		)
+		se.save().submit()
+
+		# Reserve stock on 2 different warehouses
+		itm = so.items[0]
+		so.create_stock_reservation_entries(
+			[
+				{
+					"sales_order_item": itm.name,
+					"item_code": itm.item_code,
+					"warehouse": self.warehouse_stores,
+					"qty_to_reserve": 2,
+				}
+			]
+		)
+		so.create_stock_reservation_entries(
+			[
+				{
+					"sales_order_item": itm.name,
+					"item_code": itm.item_code,
+					"warehouse": self.warehouse_finished_goods,
+					"qty_to_reserve": 3,
+				}
+			]
+		)
+
+		# Delivery note should auto-select warehouse based on reservation
+		dn = make_delivery_note(so.name, kwargs={"for_reserved_stock": True})
+		self.assertEqual(2, len(dn.items))
+		self.assertEqual(dn.items[0].qty, 2)
+		self.assertEqual(dn.items[0].warehouse, self.warehouse_stores)
+		self.assertEqual(dn.items[1].qty, 3)
+		self.assertEqual(dn.items[1].warehouse, self.warehouse_finished_goods)
+
 
 def automatically_fetch_payment_terms(enable=1):
 	accounts_settings = frappe.get_doc("Accounts Settings")
